@@ -19,7 +19,7 @@ const DOM_WIDGET = "panel_ui";
 // 所以：内容写死 520px，节点写死 560px，两者对齐，宽度永远不变。
 const PANEL_NODE_W = 560;      // 节点初始宽度（之后可自由拖动，内容自动跟随）
 const PANEL_WIDE_W = 1240;     // wide 布局：固定宽度，不允许缩放
-const PANEL_WIDE_H = 928;      // wide 布局：固定高度，不允许缩放
+const PANEL_WIDE_H = 1052;     // wide 布局：固定高度，不允许缩放（右栏要放下 4 张卡 + 使用说明）
 const PANEL_OVERHEAD = 34;     // 节点标题栏 + widget 外边距（实测约 34px）
 
 const OPTIONAL_INPUTS = {
@@ -1822,7 +1822,7 @@ function mountPanel(node) {
     shield(host);
 
     if (wide) {
-        // 固定尺寸：关掉右下角的缩放手柄，并把节点锁到 1664×928。
+        // 固定尺寸：关掉右下角的缩放手柄，并把节点锁到 PANEL_WIDE_W×PANEL_WIDE_H。
         node._qwen21Fixed = [PANEL_WIDE_W, PANEL_WIDE_H];
         node.resizable = false;
     }
@@ -2055,7 +2055,7 @@ app.registerExtension({
             const out = onResize?.apply(this, arguments);
             // 宽度跟着节点走：内容既不溢出也不留白，拖动节点时内容同步重排。
             syncPanelWidth(this);
-            // 固定尺寸：任何缩放（拖角、菜单、其他扩展）都立刻拉回 1664×928。
+            // 固定尺寸：任何缩放（拖角、菜单、其他扩展）都立刻拉回固定尺寸。
             if (this._qwen21Fixed) {
                 const [fw, fh] = this._qwen21Fixed;
                 if (Math.abs((size?.[0] ?? 0) - fw) > 0.5 || Math.abs((size?.[1] ?? 0) - fh) > 0.5) {
