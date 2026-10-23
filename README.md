@@ -90,7 +90,7 @@
 
 ### 环境要求
 
-- **ComfyUI ≥ 0.30.0** —— 需要内置官方 Qwen-Image-2.1 节点，以及 `comfy_extras` 里的 `QwenImage21Cache`、`EasyCacheNode`（加速链用到；找不到时该段自动跳过，不影响出图）
+- **ComfyUI 版本需已内置 Qwen-Image-2.1** —— 判据不是版本号，而是 `comfy_extras.nodes_qwen` 里有没有 `TextEncodeQwenImage21`（在 ComfyUI 目录下执行 `python -c "from comfy_extras.nodes_qwen import TextEncodeQwenImage21"`，不报错即可）。本节点在 **0.42.0** 上验证通过。`QwenImage21Cache`、`EasyCacheNode` 用于加速链，找不到时该段自动跳过，不影响出图
 - **Python ≥ 3.10**
 - **无额外 pip 依赖**：代码只 import 标准库和 ComfyUI 自带的 `nodes` / `folder_paths` / `server`
 
@@ -305,7 +305,7 @@ VAE 分块解码    开
 CFG = 1.0 时负向分支不参与计算。调到 2～4 才会生效，代价是风格漂移、耗时接近翻倍；能靠正向词描述干净的，就别动 CFG。
 
 **Q：找不到节点 / 启动时报 import 错误。**
-先确认 ComfyUI ≥ 0.30.0 且已内置官方 Qwen-Image-2.1 节点。加速链依赖 `comfy_extras` 里的相关节点，缺了会自动跳过，但如果连基础 loader 都没有，节点不会注册。
+先确认 ComfyUI 已内置 Qwen-Image-2.1：在 ComfyUI 目录下执行 `python -c "from comfy_extras.nodes_qwen import TextEncodeQwenImage21"`。报 `No module named 'comfy_extras.nodes_qwen'` 就是版本太旧，升级后重启即可——节点在跑图时会直接把这个原因写在报错里。加速链依赖的 `comfy_extras` 节点缺了会自动跳过，不影响出图。
 
 **Q：报「参考图生图模式需要一张参考图」。**
 切到了参考图模式但没给图。上传一张，或者把模式切回文生图。
@@ -377,7 +377,7 @@ ComfyUI_Qwen21Director/
 
 ### Requirements
 
-- ComfyUI `>= 0.30.0` (with official Qwen-Image-2.1 support)
+- ComfyUI with **built-in Qwen-Image-2.1 support** (verified on `0.42.0`). Check with `python -c "from comfy_extras.nodes_qwen import TextEncodeQwenImage21"` — no error means you are good.
 - The model weights below. Put them in these exact folders:
 
 | Purpose | File | Folder |

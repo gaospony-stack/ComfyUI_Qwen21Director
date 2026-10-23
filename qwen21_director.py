@@ -134,9 +134,40 @@ DEFAULT_PANEL = {
 DEFAULT_PANEL_TEXT = json.dumps(DEFAULT_PANEL, ensure_ascii=False, indent=2)
 
 
-def _calc_size(aspect: str, megapixels: float, multiple: int = 32):
+def _as_float(value, default, lo=None, hi=None):
+    """把面板里来的任意值转成安全浮点数。
+
+    面板值是手输 + 直接调 API 都可能进来，None / "" / "abc" / NaN 全都会撞上。
+    原生 float() 抛的 ValueError、TypeError 对用户来说完全看不出哪里填错了，
+    所以：转不了就用 default，越界夹回边界，永远不抛。
+    """
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        return float(default)
+    if not math.isfinite(v):
+        return float(default)
+    if lo is not None and v < lo:
+        v = float(lo)
+    if hi is not None and v > hi:
+        v = float(hi)
+    return v
+
+
+def _as_int(value, default, lo=None, hi=None):
+    """同 _as_float，取整后返回。
+
+    步数尤其要兜住：steps=0 时采样循环一次都不跑，ComfyUI 不报错、直接
+    吐一张纯噪声图，比报错更难排查。
+    """
+    return int(_as_float(value, default, lo, hi))
+
+
+def _calc_size(aspect: str, megapixels, multiple: int = 32):
     w_r, h_r = ASPECT_RATIOS.get(aspect, (1, 1))
-    total = float(megapixels) * 1024 * 1024
+    # 0 会算出 32×32 的图，负数直接在 math.sqrt 里抛 domain error，NaN 更难查
+    mp = _as_float(megapixels, 1.0, 0.05, 16.0)
+    total = mp * 1024 * 1024
     scale = math.sqrt(total / (w_r * h_r))
     width = max(multiple, round(w_r * scale / multiple) * multiple)
     height = max(multiple, round(h_r * scale / multiple) * multiple)
@@ -356,14 +387,18 @@ class Qwen21Director:
         pos_prompt = _panel_value(raw, "prompt", "")
         negative = _panel_value(raw, "negative", "")
         aspect = _panel_value(raw, "aspect", "1:1")
-        megapixels = float(_panel_value(raw, "megapixels", 1.0))
-        steps = int(_panel_value(raw, "steps", 25))
-        cfg = float(_panel_value(raw, "cfg", 1.0))
+        if aspect not in ASPECT_RATIOS:
+            aspect = "1:1"
+        # 下面这几个之前直接 float()/int()，None、""、"abc" 会抛 ValueError / TypeError，
+        # 报错信息看不出是哪个框填错了；steps=0 更是静默出噪点图。统一走安全转换。
+        megapixels = _as_float(_panel_value(raw, "megapixels", 1.0), 1.0, 0.05, 16.0)
+        steps = _as_int(_panel_value(raw, "steps", 25), 25, 1, 200)
+        cfg = _as_float(_panel_value(raw, "cfg", 1.0), 1.0, 0.0, 30.0)
         sampler_name = _panel_value(raw, "sampler", "euler")
         scheduler = _panel_value(raw, "scheduler", "simple")
-        seed = int(_panel_value(raw, "seed", -1))
+        seed = _as_int(_panel_value(raw, "seed", -1), -1, -1, 2 ** 63 - 1)
         easycache = bool(_panel_value(raw, "easycache", True))
-        cache_threshold = float(_panel_value(raw, "easycache_threshold", 0.22))
+        cache_threshold = _as_float(_panel_value(raw, "easycache_threshold", 0.22), 0.22, 0.0, 1.0)
         torch_compile = bool(_panel_value(raw, "torch_compile", False))
         kv_dtype = _panel_value(raw, "kv_dtype", "int8")
         vae_tiled = bool(_panel_value(raw, "vae_tiled", True))
@@ -437,7 +472,7 @@ class Qwen21Director:
             # 会读到未绑定的局部变量，把「沿用原提示词」的兜底变成 UnboundLocalError。
             pe_clip = None
             try:
-                pe_seed = int(pe_seed_raw) if pe_seed_raw is not None else 0
+                pe_seed = _as_int(pe_seed_raw, 0, -(2 ** 63), 2 ** 63 - 1)
                 if pe_seed < 0:
                     pe_seed = _random.randint(0, 0xFFFFFFFF)
 
@@ -545,7 +580,16 @@ class Qwen21Director:
 
         # ---- 3. conditioning --------------------------------------------
         stage("encode", f"{width}x{height}")
-        from comfy_extras.nodes_qwen import TextEncodeQwenImage21
+        # 这里是硬依赖：老版本 ComfyUI 没有这个模块，原生报错只有一句
+        # "No module named 'comfy_extras.nodes_qwen'"，用户根本看不出是版本太旧。
+        try:
+            from comfy_extras.nodes_qwen import TextEncodeQwenImage21
+        except ImportError as exc:
+            raise RuntimeError(
+                "当前 ComfyUI 版本不支持 Qwen-Image-2.1：缺少 comfy_extras.nodes_qwen。"
+                "请先升级 ComfyUI 再重启（本节点在 0.42.0 上验证通过）。"
+                f"原始报错：{exc}"
+            ) from exc
 
         images = None
         resolution = 1024

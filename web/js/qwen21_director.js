@@ -8,6 +8,24 @@
  */
 
 import { app } from "../../scripts/app.js";
+import { api } from "../../scripts/api.js";
+
+/**
+ * 拼接口地址。
+ *
+ * 写死 "/view" 这种根路径的话，ComfyUI 被反代挂到子路径
+ * （https://域名/comfy/）时请求会打到域名根，参考图预览、上传、
+ * 目录列表全部 404。统一交给 api.apiURL() 补上 basePath；
+ * 老版本没有这个方法时原样返回，不影响正常部署。
+ */
+function apiUrl(path) {
+    try {
+        if (api && typeof api.apiURL === "function") return api.apiURL(path);
+    } catch {
+        /* 取不到就退回原路径 */
+    }
+    return path;
+}
 
 const PANEL_NODE = "Qwen21Director";
 const DOM_WIDGET = "panel_ui";
@@ -233,23 +251,38 @@ function numberBox(value, opts, onChange) {
     const inp = shield(document.createElement("input"));
     inp.type = "number";
     inp.value = value;
-    if (opts.min != null) inp.min = opts.min;
-    if (opts.max != null) inp.max = opts.max;
+    const min = opts.min != null ? Number(opts.min) : null;
+    const max = opts.max != null ? Number(opts.max) : null;
+    if (min != null) inp.min = opts.min;
+    if (max != null) inp.max = opts.max;
     if (opts.step != null) inp.step = opts.step;
     inp.style.cssText = INPUT_CSS + ";flex:0 0 72px";
-    // 别把输入中途的半成品灌进 state：清空 / "-" / "1." 这些中间态 Number() 会变成
-    // 0 或 NaN。megapixels 变 0 后端会算出 32×32 的图，steps 变 0 直接采不出东西。
+    /* min / max 只是 HTML 属性，拦不住手输，浏览器只在表单提交时才校验。
+     * 越界值一律不写进 state：steps=0 会让采样循环 0 次、不报错直接输出噪点图；
+     * megapixels=0 会算出 32×32。所以"输入即校验、失焦才夹"，
+     * 既不打断中途输入（"1" → "15"），也不让非法值落地。 */
+    const inRange = (n) => (min == null || n >= min) && (max == null || n <= max);
+    let last = Number(value);
     inp.addEventListener("input", () => {
         const raw = inp.value.trim();
         if (raw === "" || raw === "-" || raw === "." || raw.endsWith(".")) return;
         const n = Number(raw);
-        if (Number.isFinite(n)) onChange(n);
+        if (!Number.isFinite(n) || !inRange(n)) return;
+        last = n;
+        onChange(n);
     });
-    // 清空后失焦恢复原值，避免"框空了但 state 还是旧数"的错位
+    // 失焦：空值恢复原值；越界值夹回边界并同步 state，避免"框里是 0、state 也是 0"
     inp.addEventListener("blur", () => {
-        if (inp.value.trim() === "") {
-            inp.value = String(value);
-            onChange(Number(value));
+        const raw = inp.value.trim();
+        let n = Number(raw);
+        if (raw === "" || !Number.isFinite(n)) n = Number(last);
+        if (!Number.isFinite(n)) n = min ?? 0;
+        if (min != null) n = Math.max(min, n);
+        if (max != null) n = Math.min(max, n);
+        inp.value = String(n);
+        if (n !== last) {
+            last = n;
+            onChange(n);
         }
     });
     return inp;
@@ -322,13 +355,16 @@ function select(options, value, onChange, width) {
 
 const modelListCache = new Map();
 
+/** 当前打开的目录选择菜单的清理函数（全页面只允许存在一个）。 */
+let pathMenuCleanup = null;
+
 /** 读 /object_info 拿某个加载节点的可选文件列表。失败返回空数组，由调用方兜底。 */
 async function fetchModelOptions(nodeId, inputName) {
     const key = `${nodeId}.${inputName}`;
     if (modelListCache.has(key)) return modelListCache.get(key);
     let list = [];
     try {
-        const res = await fetch(`/object_info/${nodeId}`);
+        const res = await fetch(apiUrl(`/object_info/${nodeId}`));
         if (res.ok) {
             const data = await res.json();
             const spec = data?.[nodeId]?.input?.required?.[inputName];
@@ -905,7 +941,7 @@ function buildPanel(node) {
             return;
         }
         const img = document.createElement("img");
-        img.src = `/view?filename=${encodeURIComponent(name)}&type=input&subfolder=${encodeURIComponent(sub)}&rand=${Date.now()}`;
+        img.src = apiUrl(`/view?filename=${encodeURIComponent(name)}&type=input&subfolder=${encodeURIComponent(sub)}&rand=${Date.now()}`);
         img.style.cssText = "position:absolute;inset:0;width:100%;height:100%;object-fit:contain;border-radius:3px";
         thumb.append(img);
         refName.textContent = name;
@@ -919,7 +955,7 @@ function buildPanel(node) {
         form.append("subfolder", "");
         refName.textContent = "上传中…";
         try {
-            const res = await fetch("/upload/image", { method: "POST", body: form });
+            const res = await fetch(apiUrl("/upload/image"), { method: "POST", body: form });
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
             const data = await res.json();
             if (!data || !data.name) throw new Error("返回中没有文件名");
@@ -1201,7 +1237,7 @@ function buildWidePanel(node, ctx) {
             return;
         }
         const img = document.createElement("img");
-        img.src = `/view?filename=${encodeURIComponent(name)}&type=input&subfolder=${encodeURIComponent(sub)}&rand=${Date.now()}`;
+        img.src = apiUrl(`/view?filename=${encodeURIComponent(name)}&type=input&subfolder=${encodeURIComponent(sub)}&rand=${Date.now()}`);
         img.style.cssText = "max-width:100%;max-height:100%;object-fit:contain;border-radius:3px";
         thumb.append(img);
         refName.textContent = name;
@@ -1215,7 +1251,7 @@ function buildWidePanel(node, ctx) {
         form.append("subfolder", "");
         refName.textContent = "上传中…";
         try {
-            const res = await fetch("/upload/image", { method: "POST", body: form });
+            const res = await fetch(apiUrl("/upload/image"), { method: "POST", body: form });
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
             const data = await res.json();
             if (!data || !data.name) throw new Error("返回中没有文件名");
@@ -1387,11 +1423,13 @@ function buildWidePanel(node, ctx) {
 
     /** 弹出 output 下已有子目录的列表（fixed 定位，避免被面板 overflow 裁掉）。 */
     async function openPathPicker() {
+        // 上一个菜单还开着：连同它的 document 监听一起收掉，不留堆。
+        if (pathMenuCleanup) pathMenuCleanup();
         document.getElementById("qwen21-pathmenu")?.remove();
         let dirs = [];
         let apiOk = false;
         try {
-            const res = await fetch("/qwen21/subfolders");
+            const res = await fetch(apiUrl("/qwen21/subfolders"));
             if (res.ok) { dirs = (await res.json()).dirs || []; apiOk = true; }
         } catch (e) { /* 接口不可用：仍然允许手输 */ }
 
@@ -1408,6 +1446,20 @@ function buildWidePanel(node, ctx) {
         menu.style.top = `${Math.round(rect.bottom + 3)}px`;
         menu.style.width = `${Math.round(Math.max(rect.width, 160))}px`;
 
+        /* 唯一的关闭出口。
+         * 原先只有"点菜单外面"这条路会 removeEventListener：点中某一项走的是
+         * menu.remove()，document 上那个捕获监听就一直挂着，闭包里还攥着
+         * 已移除的 DOM —— 每用一次目录选择器就泄漏一个。 */
+        let disposed = false;
+        let close = null;
+        const dispose = () => {
+            if (disposed) return;
+            disposed = true;
+            menu.remove();
+            if (close) document.removeEventListener("pointerdown", close, true);
+            if (pathMenuCleanup === dispose) pathMenuCleanup = null;
+        };
+
         const item = (label, value) => {
             const it = el("div", "padding:3px 7px;border-radius:4px;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis");
             it.textContent = label;
@@ -1417,7 +1469,7 @@ function buildWidePanel(node, ctx) {
                 ev.stopPropagation();
                 pathInp.value = value;
                 set("subfolder", value);
-                menu.remove();
+                dispose();
             });
             menu.append(it);
         };
@@ -1442,13 +1494,11 @@ function buildWidePanel(node, ctx) {
         }
         document.body.append(menu);
         shield(menu);
-        const close = (ev) => {
-            if (!menu.contains(ev.target)) {
-                menu.remove();
-                document.removeEventListener("pointerdown", close, true);
-            }
+        pathMenuCleanup = dispose;
+        close = (ev) => {
+            if (!menu.contains(ev.target)) dispose();
         };
-        setTimeout(() => document.addEventListener("pointerdown", close, true), 0);
+        setTimeout(() => { if (!disposed) document.addEventListener("pointerdown", close, true); }, 0);
     }
 
     infoCol.append(prevInfo, prefixRow, pathBlock);
@@ -1517,7 +1567,7 @@ function buildWidePanel(node, ctx) {
         }
         prevBox.textContent = "";
         const img = document.createElement("img");
-        img.src = `/view?filename=${encodeURIComponent(first.filename)}&type=${encodeURIComponent(first.type || "output")}&subfolder=${encodeURIComponent(first.subfolder || "")}&rand=${Date.now()}`;
+        img.src = apiUrl(`/view?filename=${encodeURIComponent(first.filename)}&type=${encodeURIComponent(first.type || "output")}&subfolder=${encodeURIComponent(first.subfolder || "")}&rand=${Date.now()}`);
         img.style.cssText = "max-width:100%;max-height:100%;object-fit:contain;border-radius:3px";
         prevBox.append(img);
         const [w, h] = calcSize(state.aspect || "1:1", state.megapixels ?? 1.0);
@@ -1891,6 +1941,8 @@ app.registerExtension({
         nodeType.prototype.onRemoved = function () {
             this._qwen21Panel?.status?.stopTick?.();
             clearTimeout(this._qwen21StatusTimer);
+            // 节点被删时目录菜单可能还开着：连带它的 document 监听一起收掉
+            if (pathMenuCleanup) pathMenuCleanup();
             for (const [ev, fn] of this._qwen21Listeners || []) {
                 try { app.api?.removeEventListener?.(ev, fn); } catch { /* 老版本无此方法 */ }
             }
