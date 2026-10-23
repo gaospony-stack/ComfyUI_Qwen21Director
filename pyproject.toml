@@ -1,0 +1,18 @@
+[project]
+name = "qwen21-director"
+description = "Single-node visual panel for Qwen-Image-2.1 (text-to-image / reference-to-image) with built-in prompt rewrite and acceleration."
+version = "1.0.0"
+license = { file = "LICENSE" }
+readme = "README.md"
+requires-python = ">=3.10"
+
+[project.urls]
+Repository = "https://github.com/gaospony-stack/ComfyUI_Qwen21Director"
+
+[tool.comfy]
+# 只发 GitHub 时保持 "local"；要发 ComfyUI Registry 需改成你在
+# registry.comfy.org 注册的 PublisherId（同时把上面 Repository 改对）
+PublisherId = "local"
+DisplayName = "Qwen 2.1 Director"
+Icon = ""
+requires-comfyui = ">=0.30.0"
