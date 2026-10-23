@@ -1696,7 +1696,7 @@ function buildWidePanel(node, ctx) {
     /* ============================ 右栏：使用说明 ========================
      * 不再折叠：固定高度下只保留三段最关键的话，全部直接显示。
      * 每段正文压到一行能读完——不写耗时数字（会随硬件和驱动漂移，写进去
-     * 反而变成要维护的负担），只说"要不要开、怎么开才生效"。 */
+     * 反而变成要维护的负担），只说"要不要开、开销在哪、怎么用才生效"。 */
     const helpBox = el("div", [
         "box-sizing:border-box", "margin:0", "padding:4px 7px",
         `border:1px solid ${THEME.cardBorder}`, "border-radius:6px",
@@ -1705,8 +1705,10 @@ function buildWidePanel(node, ctx) {
     ].join(";"));
     const helpList = el("div", "display:flex;flex-direction:column;gap:3px;font-size:10.5px;line-height:1.5");
     [
-        ["提示词增强", "改写一次 3~7 分钟，跑完自动卸载；重要出图才开。"],
-        ["负向提示词", "cfg = 1.0 不生效，要生效把 CFG 调到 2~4。"],
+        // 卸载时机说"改写完立刻"而不是"跑完"：PE 在采样之前就退出，主模型随后才加载。
+        ["提示词增强", "改写完立刻卸载权重，不与主模型抢显存；重要出图再开。"],
+        // 只陈述数学事实 + 后果，不把"调高 CFG"包装成推荐做法。
+        ["负向提示词", "CFG = 1.0 时负向词不参与计算；拉到 2~4 才生效，风格会变。"],
         ["运行前", "先关 Ollama，别让它抢显存。"],
     ].forEach(([k, v]) => {
         const rowH = el("div", "display:flex;gap:4px;align-items:baseline");

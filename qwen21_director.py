@@ -431,8 +431,11 @@ class Qwen21Director:
             pe_key = mode if mode in PE_MODELS else "t2i"
             sampling = PE_SAMPLING.get(pe_key, PE_SAMPLING["t2i"])
             # 让状态栏说明此刻跑的是 PE 权重而不是主模型：9B 视觉语言模型，
-            # 8GB 显存要 offload，改写一次 3–7 分钟，不说明白容易被当成卡死。
+            # 显存不够要 offload 到内存，改写耗时随硬件浮动，不说明白容易被当成卡死。
             stage("pe", short_model_tag(PE_MODELS[pe_key]), PE_MODELS[pe_key])
+            # 必须先绑定：CLIPLoader 抛异常时 finally 里的 _release_pe_model(pe_clip)
+            # 会读到未绑定的局部变量，把「沿用原提示词」的兜底变成 UnboundLocalError。
+            pe_clip = None
             try:
                 pe_seed = int(pe_seed_raw) if pe_seed_raw is not None else 0
                 if pe_seed < 0:
