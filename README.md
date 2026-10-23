@@ -101,6 +101,8 @@ cd ComfyUI/custom_nodes
 git clone <本仓库地址> ComfyUI_Qwen21Director
 ```
 
+不想用 git 的话，到 [Releases](https://github.com/gaospony-stack/ComfyUI_Qwen21Director/releases/latest) 下载 `ComfyUI_Qwen21Director-vX.Y.Z.zip`，解压到 `ComfyUI/custom_nodes/` 下（压缩包内已带好一层目录名，直接解压即可）。
+
 重启 ComfyUI。在节点列表 `Qwen21` 分类下可以看到 **Qwen 2.1 Director（面板）**。
 
 > 只改过前端界面（`web/js/`）时，不必重启，浏览器 `Ctrl+F5` 强制刷新即可；改过 `.py` 必须重启。
