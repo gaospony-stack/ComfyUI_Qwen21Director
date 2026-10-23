@@ -129,7 +129,8 @@ function placeholderInto(node, icon, label) {
     return box;
 }
 
-/** Keep canvas drag / zoom from hijacking typing, dragging sliders etc. */function shield(node) {
+/** Keep canvas drag / zoom from hijacking typing, dragging sliders etc. */
+function shield(node) {
     for (const ev of ["pointerdown", "mousedown", "wheel", "dblclick"]) {
         node.addEventListener(ev, (e) => e.stopPropagation(), { passive: true });
     }
@@ -236,7 +237,21 @@ function numberBox(value, opts, onChange) {
     if (opts.max != null) inp.max = opts.max;
     if (opts.step != null) inp.step = opts.step;
     inp.style.cssText = INPUT_CSS + ";flex:0 0 72px";
-    inp.addEventListener("input", () => onChange(Number(inp.value)));
+    // 别把输入中途的半成品灌进 state：清空 / "-" / "1." 这些中间态 Number() 会变成
+    // 0 或 NaN。megapixels 变 0 后端会算出 32×32 的图，steps 变 0 直接采不出东西。
+    inp.addEventListener("input", () => {
+        const raw = inp.value.trim();
+        if (raw === "" || raw === "-" || raw === "." || raw.endsWith(".")) return;
+        const n = Number(raw);
+        if (Number.isFinite(n)) onChange(n);
+    });
+    // 清空后失焦恢复原值，避免"框空了但 state 还是旧数"的错位
+    inp.addEventListener("blur", () => {
+        if (inp.value.trim() === "") {
+            inp.value = String(value);
+            onChange(Number(value));
+        }
+    });
     return inp;
 }
 
@@ -565,6 +580,14 @@ function statusBar(parent, getModel) {
             api.pctSpan = 0;
             api.sub = 0;
             if (kind === "ready") api.frozen = null;
+        } else {
+            // 运行态（pe/gen）也要把区间清零：完成态残留的 pctBase=100 不清的话，
+            // 在「完成 → 10 秒内又点运行」这条路径上会带着 100 起跳、被 clamp 成
+            // 99%，状态栏一开跑就显示 99%。真正的区间等后端 stage 事件到达再填。
+            api.pctBase = 0;
+            api.pctSpan = 0;
+            api.sub = 0;
+            api.frozen = null;
         }
         if (kind === "done") api.pctBase = 100;
         if (kind === "pe" || kind === "gen") {
@@ -1131,8 +1154,8 @@ function buildWidePanel(node, ctx) {
     refBox.style.overflow = "hidden";
     const refRow = el("div", "display:flex;gap:7px;align-items:stretch;flex:1 1 auto;min-height:0");
     const refCtrl = el("div", "display:flex;flex-direction:column;flex:0 0 104px;min-width:0;justify-content:flex-start");
-    const refTitle = el("div", "font-weight:600;font-size:11px;opacity:.9;margin-bottom:6px");
-    refTitle.textContent = "选择图片";
+    // 这里不再重复一个"选择图片"小标题：外层 section 已经写着"参考图"，下面还有
+    // 同名的按钮，三行叠起来会让人分不清哪个能点。
     const refName = el("div", "font-size:9.5px;opacity:.8;word-break:break-all;line-height:1.35;margin-bottom:7px");
     // 按钮推到控制列底部并水平居中
     const btnRow = el("div", "display:flex;flex-direction:column;gap:4px;align-items:center;margin-top:auto;margin-bottom:12px;align-self:center");
@@ -1152,7 +1175,7 @@ function buildWidePanel(node, ctx) {
     });
     clrBtn.style.display = "none";
     btnRow.append(upBtn, clrBtn);
-    refCtrl.append(refTitle, refName, btnRow);
+    refCtrl.append(refName, btnRow);
 
     // 图片用绝对定位铺满：不参与 min-content 计算，否则一张大图会把整个左列顶穿。
     const thumb = el("div", [
@@ -1859,10 +1882,17 @@ app.registerExtension({
     async beforeRegisterNodeDef(nodeType, nodeData) {
         if (nodeData?.name !== PANEL_NODE) return;
 
-        // 节点被删除时停掉百分比爬行定时器，别让 interval 挂在 detached DOM 上空转
+        // 节点被删除时停掉百分比爬行定时器，并解绑所有 app.api 事件 ——
+        // 不解绑的话监听器闭包里攥着 node，删掉的节点永远回收不了；
+        // 反复载入工作流还会一路叠加重回调，越用越卡。
         const onRemovedBase = nodeType.prototype.onRemoved;
         nodeType.prototype.onRemoved = function () {
             this._qwen21Panel?.status?.stopTick?.();
+            clearTimeout(this._qwen21StatusTimer);
+            for (const [ev, fn] of this._qwen21Listeners || []) {
+                try { app.api?.removeEventListener?.(ev, fn); } catch { /* 老版本无此方法 */ }
+            }
+            this._qwen21Listeners = null;
             return onRemovedBase?.apply(this, arguments);
         };
 
@@ -1880,9 +1910,15 @@ app.registerExtension({
              * 至少状态栏不会一直停在"就绪"。 */
             const node = this;
             const st = () => node._qwen21Panel?.status;
+            // 统一登记，onRemoved 里统一解绑（见上面的 onRemoved）
+            const on = (ev, fn) => {
+                app.api?.addEventListener(ev, fn);
+                if (!node._qwen21Listeners) node._qwen21Listeners = [];
+                node._qwen21Listeners.push([ev, fn]);
+            };
 
             /* 后端分段播报：{node, key, label, cur, total, model} */
-            app.api?.addEventListener("qwen21/stage", (e) => {
+            on("qwen21/stage", (e) => {
                 try {
                     const d = e?.detail ?? e;
                     if (!node._qwen21Panel || !d) return;
@@ -1894,7 +1930,7 @@ app.registerExtension({
                 } catch { /* 状态栏只是展示，绝不影响出图 */ }
             });
 
-            app.api?.addEventListener("executing", (e) => {
+            on("executing", (e) => {
                 try {
                     // 注意：executing 的 detail 就是节点 id 本身，不是 {node:id} 对象。
                     // （api 打包件：case "executing": dispatchCustomEvent("executing", data.display_node || data.node)）
@@ -1910,7 +1946,7 @@ app.registerExtension({
             });
             /* execution_start 兜底：整个 prompt 开跑。executing 若因故漏拍，
              * 至少不会让 PE 阶段（3–7 分钟）显示在"就绪"上让人以为卡住了。 */
-            app.api?.addEventListener("execution_start", () => {
+            on("execution_start", () => {
                 try {
                     if (!node._qwen21Panel || !node._qwen21Pe) return;   // 只兜 PE 场景
                     const s = st();
@@ -1919,21 +1955,30 @@ app.registerExtension({
                     s.set("pe", "正在改写提示词（PE-9B thinking）…");
                 } catch { /* 同上 */ }
             });
-            app.api?.addEventListener("progress", (e) => {
+            on("progress", (e) => {
                 try {
                     const s = st();
                     if (!s) return;
+                    const d = e?.detail ?? e;
+                    // progress 是全局广播：工作流里任何一个采样节点都会触发。
+                    // 带 node 字段就只认自己的，否则别的节点采样会把本面板的步数冲掉、
+                    // 还会把从没运行过的面板标记成"运行中"。
+                    const owner = d?.node ?? d?.display_node;
+                    if (owner != null && String(owner) !== String(node.id)) return;
                     // _qwen21Run 没置位说明 executing 漏拍了：兜底，别让状态停在"就绪"。
                     if (!node._qwen21Run) node._qwen21Run = Date.now();
                     // 后端没推阶段时，progress 是唯一能证明"在采样"的信号
                     if (!(s.stage?.total > 0) && s.cur !== "gen") s.set("gen", "正在生图…");
-                    s.setStep(e?.value ?? e?.detail?.value ?? 0,
-                        e?.max ?? e?.detail?.max ?? 0);
+                    s.setStep(d?.value ?? 0, d?.max ?? 0);
                 } catch { /* 同上 */ }
             });
-            app.api?.addEventListener("execution_error", () => {
+            on("execution_error", (e) => {
                 try {
                     if (!node._qwen21Run) return;
+                    // 有 node 字段时只认自己的；没跑过的面板不要跟着报错
+                    const d = e?.detail ?? e;
+                    const owner = d?.node ?? d?.display_node;
+                    if (owner != null && String(owner) !== String(node.id)) return;
                     node._qwen21Run = 0;
                     st()?.set("fail", "⚠ 生图失败，详情看 ComfyUI 控制台");
                 } catch { /* 同上 */ }

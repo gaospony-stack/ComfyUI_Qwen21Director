@@ -1,7 +1,7 @@
 [project]
 name = "qwen21-director"
 description = "Single-node visual panel for Qwen-Image-2.1 (text-to-image / reference-to-image) with built-in prompt rewrite and acceleration."
-version = "1.0.0"
+version = "1.0.1"
 license = { file = "LICENSE" }
 readme = "README.md"
 requires-python = ">=3.10"
