@@ -1,6 +1,8 @@
 # Qwen 2.1 Director（ComfyUI 面板节点）
 
 > 一个节点，一整条 Qwen-Image-2.1 生图链路，加一块填参数的面板。
+>
+> **English**: A single-node ComfyUI panel that wraps the entire Qwen-Image-2.1 pipeline (load → accelerate → encode → sample → decode → save) into one node with a real parameter UI. No node spaghetti, no hunting for a step count across eight nodes. Jump to [English Quick Start](#english-quick-start) · 中文文档见下。
 
 ![面板截图](docs/screenshot.png)
 
@@ -8,13 +10,31 @@
 
 ---
 
+## 效果展示
+
+以下图片均由本节点直接产出，未经修图或后期合成，仅做了尺寸缩放与格式转换（PNG → WebP）：
+
+| 角色多视图 · 参考图模式 | 多角度细节一致性 |
+|:---:|:---:|
+| ![角色四视图](docs/examples/character-sheet-01.webp) | ![五视图](docs/examples/character-sheet-02.webp) |
+| 一张参考图 → 同角色正/侧/背多视图，用于漫剧、短剧的角色设定 | 服装、装备、配饰在不同角度保持一致 |
+| **电影感场景 · 文生图** | **四格分镜 · 多镜头一致性** |
+| ![雨夜暗巷](docs/examples/scene-night-alley.webp) | ![四格分镜](docs/examples/storyboard-4panel.webp) |
+| 纯提示词出图，湿地面反光、霓虹色溢、体积雾 | 一次生成多镜头，同一角色跨镜头保持一致 |
+
+> 出图分辨率 2048×1152，25 步，加速预设开启。你可以直接用仓库里的[示例工作流](examples/Qwen21_Director_workflow.json)复现同类效果。
+
+---
+
 ## 目录
 
+- [效果展示](#效果展示)
 - [这个节点解决什么问题](#这个节点解决什么问题)
 - [功能一览](#功能一览)
 - [安装](#安装)
 - [模型放置](#模型放置)
 - [快速开始](#快速开始)
+- [示例工作流](#示例工作流)
 - [面板详解](#面板详解)
 - [输出与落盘规则](#输出与落盘规则)
 - [默认参数](#默认参数)
@@ -115,6 +135,20 @@ git clone <本仓库地址> ComfyUI_Qwen21Director
 7. 图会保存到 `output/<子目录>/<前缀>_00001_.png`，同时显示回面板
 
 > **运行前先关掉 Ollama**（如果装了）。它会常驻显存，和这套模型抢，直接表现为 OOM 或速度骤降。
+
+---
+
+## 示例工作流
+
+不想手动搭节点，直接用仓库里带的工作流：
+
+[`examples/Qwen21_Director_workflow.json`](examples/Qwen21_Director_workflow.json)
+
+**用法一（推荐）**：下载这个 json，在 ComfyUI 里把文件拖进画布，或顶部菜单 → Workflow → Open 打开即可。里面已经把面板节点、尺寸、采样、加速都配好了。
+
+**用法二**：如果你装了 [ComfyUI Manager](https://github.com/ltdrdata/ComfyUI-Manager)，也可以在 Manager 的 Workflow 面板里导入。
+
+打开后**第一件事**是检查「模型」区三个下拉（UNET / CLIP / VAE）指向的文件是否都存在 —— 工作流里存的是文件名，换了机器、文件名不一致时要重新选一次。
 
 ---
 
@@ -305,8 +339,11 @@ ComfyUI_Qwen21Director/
 ├── qwen21_director.py       后端：加载 / PE / 加速 / 采样 / 解码 / 保存 / 阶段播报
 ├── web/js/
 │   └── qwen21_director.js   前端：整块面板（DOM 自绘 + 状态栏）
+├── examples/
+│   └── Qwen21_Director_workflow.json   开箱即用的示例工作流
 ├── docs/
-│   └── screenshot.png
+│   ├── screenshot.png       面板截图
+│   └── examples/            效果展示图（WebP）
 ├── LICENSE                  Apache-2.0
 └── README.md
 ```
@@ -323,3 +360,50 @@ ComfyUI_Qwen21Director/
 
 - [Comfy-Org / ComfyUI](https://github.com/comfyanonymous/ComfyUI) —— 官方 Qwen-Image-2.1 支持与加速节点
 - Qwen 团队 —— Qwen-Image-2.1 模型与 PE 改写方案
+
+---
+
+## English Quick Start
+
+**Qwen 2.1 Director** collapses the whole Qwen-Image-2.1 pipeline — loaders, acceleration, text encoding, sampling, decoding, saving — into **one ComfyUI node with a real panel UI**. Instead of 8–10 wired-up nodes, you get one node and a form. Output is written to disk and previewed back inside the panel.
+
+### Requirements
+
+- ComfyUI `>= 0.30.0` (with official Qwen-Image-2.1 support)
+- The model weights below. Put them in these exact folders:
+
+| Purpose | File | Folder |
+|---|---|---|
+| Diffusion model | `qwen_image_2.1_int8_convrot.safetensors` | `models/diffusion_models/` |
+| Text encoder | `qwen3vl_8b_int8_convrot.safetensors` | `models/text_encoders/` |
+| VAE | `qwen_image_2.1_vae_bf16.safetensors` | `models/vae/` |
+| PE rewrite (t2i) | `qwen3.5_9b_qwen_image_2.1_pe_t2i.int8_convrot.safetensors` | `models/text_encoders/` |
+| PE rewrite (i2i) | `qwen3.5_9b_qwen_image_2.1_pe_i2i.int8_convrot.safetensors` | `models/text_encoders/` |
+
+These are the **default** filenames — if yours differ, just pick your file in the panel dropdowns. Only the `t2i` PE weight is needed if you never use reference-image mode. PE weights load through `CLIPLoader(type=qwen_image)`, so they belong in `text_encoders/`, **not** `checkpoints/`. Weights are not distributed here; get them from the official Qwen-Image-2.1 release.
+
+### Install
+
+```bash
+cd ComfyUI/custom_nodes
+git clone https://github.com/gaospony-stack/ComfyUI_Qwen21Director.git
+```
+
+Restart ComfyUI. The node appears as **Qwen 2.1 Director** under the `Qwen21` category.
+
+### Use
+
+1. Drag [`examples/Qwen21_Director_workflow.json`](examples/Qwen21_Director_workflow.json) into the canvas — everything is pre-wired.
+2. Verify the three dropdowns under **模型 / Model** (UNET / CLIP / VAE) point at files you actually have.
+3. Type a prompt. Optionally enable **提示词增强 / Prompt Enhance** — this runs a 9B rewrite model and takes **3–7 minutes**; it is not hung.
+4. Pick an aspect ratio and target megapixels under **输出尺寸 / Output Size**.
+5. Queue Prompt. The image lands in `output/<subfolder>/` and shows up in the panel.
+
+### Gotchas
+
+- **Quit Ollama before running.** It holds VRAM permanently and fights this model — the symptom is an OOM or a sudden 10× slowdown.
+- **Negative prompts do nothing.** The sampler runs at CFG 1.0, where the negative branch is mathematically cancelled out. Use the positive prompt and the PE rewrite instead.
+- **The status bar percentage is time-weighted, not stage-count-based.** The PE rewrite legitimately occupies 60–80% of a typical run, so an even 1/8 per stage would sit still and look frozen.
+- Without the optional models the node still runs — you just lose prompt enhancement.
+
+Full Chinese documentation (panel walkthrough, acceleration presets, VRAM guidance, FAQ, known limitations) is above. Issues and PRs welcome.
